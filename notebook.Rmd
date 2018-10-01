@@ -1,0 +1,131 @@
+---
+title: "Big Data in R"
+author: "Peter Collins"
+date: "September 26, 2018"
+output: github_document
+---
+
+## Introduction
+Big Data problems in R can be defined as cases where a data set is too large to fit into memory of the local machine. In the exploratory phase of project we usually solve this problem by working with a subset of the data and this is usually achieves good results. Once a promising model is found using the initial subset of data, we might want to re-fit the model using all of the available data to re-fit the model. There are several approaches to the Big Data problem in R and the choice depends on the resources available (be it budgetary or time). 
+
+In this notebook we consider an example case where we encounter a Big Data problem and we show how we might solve it.
+
+## Connecting to the Database
+Our first task is to connect to a data store. There are several functions in `dplyr` that allow us to access data in various formats, all of the form `src_{*store type*}`. Below we will connect to a RedShift database hosted on AWS, which uses PostgreSQL.
+```{r Connectng to DB}
+library(dplyr)
+
+# Create connection to the database
+air <- src_postgres(
+  dbname = 'airontime', 
+  host = 'sol-eng.cjku7otn8uia.us-west-2.redshift.amazonaws.com', 
+  port = '5439', 
+  user = 'redshift_user', 
+  password = 'ABCd4321')
+```
+The function `src_tbls()` lists the tables contained in the database referenced by the connection object.
+```{r DB tables}
+# List table names
+src_tbls(air)
+```
+If we want to work with one of these tables in R, we make a reference to them with `tbl()` from `dplyr`.
+```{r table references}
+# Create a table reference with tbl
+flights <- tbl(air, "flights")
+carriers <- tbl(air, "carriers")
+```
+When we call one of the connection objects in R, it retrieves the first 10 rows of the table. 
+```{r}
+print(flights)
+```
+Note that there are many millions of rows in this database, more than can easily be held in memory:
+``` {r Counting rows}
+# Count the rows in flights table
+print(flights %>% count())
+```
+
+## Manipulating Data
+As seen in the previous code snippet, we can manipulate the tables in the database using regular R code. Below we perform some pre-processing on the `flights` table using `dlpyr` verbs:
+``` {r manipulation}
+# Manipulate the reference as if it were the actual table
+clean <- flights %>%
+  filter(!is.na(arrdelay), !is.na(depdelay)) %>%
+  filter(depdelay > 15, depdelay < 240) %>%
+  filter(year >= 2002 & year <= 2007) %>%
+  select(year, arrdelay, depdelay, distance, uniquecarrier)
+```
+When this code is run it executes quite fast. This is because `dplyr` uses lazy-evaluation, meaning that the query is only evaluated as needed. If we ask to see `clean`, `dplyr` will show us the SQL query that will be executed when references to `clean` are made.
+``` {r Show Query}
+# Show the SQL query stored in `clean`
+show_query(clean)
+```
+
+As we have seen, `dplyr` will return only the first 10 rows of the table when we call the reference. If we would like to retrieve all of the data into R, we simply add `colect()` to the end of our chain of manipulations. A similar function is `collapse()`, which forces `dplyr` to run all code up to the `collapse()` function in the chain of manipulations. This can be useful if we want a new table to work from before any more filtering is performed. Below we demonstrate how these two functions can be used in a sampling example:
+``` {r cache=TRUE}
+# Extract random 1% sample of training data
+random <- clean %>%
+  mutate(x = random()) %>%
+  collapse() %>%
+  filter(x <= 0.01) %>%
+  select(-x) %>%
+  collect()
+```
+Let's walk through this line-by-line. First we use `mutate()` to create a new variable `x` which is a random number between zero and one. Then we call `collapse()` to execute this query in the database, yielding a table with the new variable 'x'. Next we choose all rows with `x` less than or equal to 0.01 and then we drop the `x` variable with the `select()` statement. Finally, we bring the table into R using `collect()`.
+Now we have a tibble `random` stored in the local machine's memory:
+``` {r Summary of random}
+print(random)
+```
+
+## Fitting a Model
+Now that we have a sample of data, we can proceed to analyse the data using R. For this exercises we will fit a linear model predicting a variable $gain$, where 
+$$
+gain = \textit{depdelay } - \textit{ arrdelay}.
+$$
+We choose a model with predictors $depdelay$, $distance$, and $uniquecarrier$. To start, add the new variable to the table `random`: 
+```{r new variable}
+# Create new variable `gain`
+random$gain <- random$depdelay - random$arrdelay
+```
+Fit a linear regression model with `lm()`:
+```{r Model}
+# Build model
+mod <- lm(gain ~ depdelay + distance + factor(uniquecarrier), data = random)
+```
+In order to make predictions from this model on data in the database, a dataframe containing the model coefficients is made.
+```{r Coefficient Table}
+# Make coefficients lookup table
+coefs <- dummy.coef(mod)
+coefs_table <- data.frame(
+  uniquecarrier = names(coefs$`factor(uniquecarrier)`),
+  carrier_score = coefs$`factor(uniquecarrier)`,
+  int_score = coefs$`(Intercept)`,
+  dist_score = coefs$distance,
+  delay_score = coefs$depdelay,
+  row.names = NULL, 
+  stringsAsFactors = FALSE
+)
+print(coefs_table)
+```
+Using the model coefficients, we score the test data in the database. Note that the training set and test set are non-overlapping.
+```{r cache=TRUE}
+# Score test data
+score <- flights %>%
+  filter(year == 2008) %>%
+  filter(!is.na(arrdelay) & !is.na(depdelay) & !is.na(distance)) %>%
+  filter(depdelay > 15 & depdelay < 240) %>%
+  filter(arrdelay > -60 & arrdelay < 360) %>%
+  select(arrdelay, depdelay, distance, uniquecarrier) %>%
+  left_join(carriers, by = c('uniquecarrier' = 'code')) %>%
+  left_join(coefs_table, copy = TRUE) %>%
+  mutate(gain = depdelay - arrdelay) %>%
+  mutate(pred = int_score + carrier_score + dist_score * distance + delay_score * depdelay) %>%
+  group_by(description) %>%
+  summarize(gain = mean(1.0 * gain), pred = mean(pred))
+scores <- collect(score)
+print(scores)
+```
+What we have done here is computed the predicted scores entirely inside the database; the test data is never loaded into memory. A side-effect of this process is that we had to compute the scores manually with a `mutate()` verb. Some database software comes with basic statistical packages that allow for prediction without needing to specify the equation explicitly (c.f spark_ml). 
+
+## Closing Notes
+Here we have demonstrated a typical sampling method for dealing with Big Data problems, however we have not looked at cases where we want to fit a model to all of the data in the database. Base R cannot solve these types of problems and packages with distributed computation must instead be used (e.g. `sparklyr`). This may seem like a severe limitation of R, but one should not underestimate the efficacy of sampling in statistical analysis. Sampling may yield a model that is "good enough" for our project or serve as a useful starting point of a larger project. Before spending time devising distributed learning solutions to a problem, start with a model derived from a sub-sample of the total data.
+

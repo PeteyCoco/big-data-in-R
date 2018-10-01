@@ -13,7 +13,7 @@ In this notebook we consider an example case where we encounter a Big Data probl
 Connecting to the Database
 --------------------------
 
-Our first task is to connect to a data store. There are several functions in `dplyr` that allow us to access data in various formate, all of the form `src_{*store type*}`. Below we will connect to a RedShift database hosted on AWS, which uses PostgreSQL.
+Our first task is to connect to a data store. There are several functions in `dplyr` that allow us to access data in various formats, all of the form `src_{*store type*}`. Below we will connect to a RedShift database hosted on AWS, which uses PostgreSQL.
 
 ``` r
 library(dplyr)
@@ -47,7 +47,8 @@ The function `src_tbls()` lists the tables contained in the database referenced 
 src_tbls(air)
 ```
 
-    ## [1] "flights"    "carriers"   "planes"     "mkaiugyfut" "xybudrvjga"
+    ## [1] "flights"    "carriers"   "planes"     "zffhrierqk" "mworvizmbx"
+    ## [6] "upldulewco" "clclgqdtfr"
 
 If we want to work with one of these tables in R, we make a reference to them with `tbl()` from `dplyr`.
 
@@ -126,11 +127,11 @@ show_query(clean)
     ## FROM (SELECT *
     ## FROM (SELECT *
     ## FROM "flights"
-    ## WHERE ((NOT((("arrdelay") IS NULL))) AND (NOT((("depdelay") IS NULL))))) "jrmnznlnpk"
-    ## WHERE (("depdelay" > 15.0) AND ("depdelay" < 240.0))) "fvrdcxjtrj"
+    ## WHERE ((NOT((("arrdelay") IS NULL))) AND (NOT((("depdelay") IS NULL))))) "pqydmkcmur"
+    ## WHERE (("depdelay" > 15.0) AND ("depdelay" < 240.0))) "xhnudvmrsy"
     ## WHERE ("year" >= 2002.0 AND "year" <= 2007.0)
 
-As we have seen, `dplyr` will reutrn only the first 10 rows of the table when we call the reference. If we would like to retrieve all of the data into R, we simply add `colect()` to the end of our chain of manipulations. A similar function is `collapse()`, which forces `dplyr` to run all code up to the `collapse()` function in the chain of manipulations. This can be useful if we want a new table to work from before any more filtering is performed. Below we demonstrate how these two functions can be used in a sampling example:
+As we have seen, `dplyr` will return only the first 10 rows of the table when we call the reference. If we would like to retrieve all of the data into R, we simply add `colect()` to the end of our chain of manipulations. A similar function is `collapse()`, which forces `dplyr` to run all code up to the `collapse()` function in the chain of manipulations. This can be useful if we want a new table to work from before any more filtering is performed. Below we demonstrate how these two functions can be used in a sampling example:
 
 ``` r
 # Extract random 1% sample of training data
@@ -166,7 +167,7 @@ print(random)
 Fitting a Model
 ---------------
 
-Now that we have a sample of data, we can proceed to analyse the data using R. For this exercies we will fit a linear model predicting a variable *g**a**i**n*, where
+Now that we have a sample of data, we can proceed to analyse the data using R. For this exercises we will fit a linear model predicting a variable *g**a**i**n*, where
 *g**a**i**n* = *depdelay * − * arrdelay*.
  We choose a model with predictors *d**e**p**d**e**l**a**y*, *d**i**s**t**a**n**c**e*, and *u**n**i**q**u**e**c**a**r**r**i**e**r*. To start, add the new variable to the table `random`:
 
@@ -179,24 +180,50 @@ Fit a linear regression model with `lm()`:
 
 ``` r
 # Build model
-mod <- lm(gain ~ depdelay + distance + uniquecarrier, data = random)
+mod <- lm(gain ~ depdelay + distance + factor(uniquecarrier), data = random)
 ```
 
-In order to make predictions from this model on data in the database, a dataframe containing the model coefficients is made. **NOTE: This code does not work properly. It must be editted to create a proper coeficients table. This will be changed when I have time. **
+In order to make predictions from this model on data in the database, a dataframe containing the model coefficients is made.
 
 ``` r
 # Make coefficients lookup table
 coefs <- dummy.coef(mod)
 coefs_table <- data.frame(
-  uniquecarrier = names(coefs$uniquecarrier),
-  carrier_score = coefs$uniquecarrier,
+  uniquecarrier = names(coefs$`factor(uniquecarrier)`),
+  carrier_score = coefs$`factor(uniquecarrier)`,
   int_score = coefs$`(Intercept)`,
   dist_score = coefs$distance,
   delay_score = coefs$depdelay,
   row.names = NULL, 
   stringsAsFactors = FALSE
 )
+print(coefs_table)
 ```
+
+    ##    uniquecarrier carrier_score  int_score  dist_score delay_score
+    ## 1             9E     0.0000000 -0.3185058 0.003327575 -0.01160389
+    ## 2             AA    -3.1659005 -0.3185058 0.003327575 -0.01160389
+    ## 3             AQ     0.9321424 -0.3185058 0.003327575 -0.01160389
+    ## 4             AS    -0.1198957 -0.3185058 0.003327575 -0.01160389
+    ## 5             B6    -4.0806158 -0.3185058 0.003327575 -0.01160389
+    ## 6             CO    -3.4244714 -0.3185058 0.003327575 -0.01160389
+    ## 7             DH     1.5651681 -0.3185058 0.003327575 -0.01160389
+    ## 8             DL    -4.0465044 -0.3185058 0.003327575 -0.01160389
+    ## 9             EV     0.5754155 -0.3185058 0.003327575 -0.01160389
+    ## 10            F9    -0.9408556 -0.3185058 0.003327575 -0.01160389
+    ## 11            FL    -2.4549772 -0.3185058 0.003327575 -0.01160389
+    ## 12            HA     0.8588875 -0.3185058 0.003327575 -0.01160389
+    ## 13            HP     0.1943524 -0.3185058 0.003327575 -0.01160389
+    ## 14            MQ    -2.9741730 -0.3185058 0.003327575 -0.01160389
+    ## 15            NW    -3.1157677 -0.3185058 0.003327575 -0.01160389
+    ## 16            OH    -0.4225034 -0.3185058 0.003327575 -0.01160389
+    ## 17            OO    -0.3259470 -0.3185058 0.003327575 -0.01160389
+    ## 18            TZ    -1.9133276 -0.3185058 0.003327575 -0.01160389
+    ## 19            UA    -1.7054101 -0.3185058 0.003327575 -0.01160389
+    ## 20            US    -1.2225751 -0.3185058 0.003327575 -0.01160389
+    ## 21            WN     2.9729695 -0.3185058 0.003327575 -0.01160389
+    ## 22            XE    -3.4014805 -0.3185058 0.003327575 -0.01160389
+    ## 23            YV     2.1512287 -0.3185058 0.003327575 -0.01160389
 
 Using the model coefficients, we score the test data in the database. Note that the training set and test set are non-overlapping.
 
@@ -227,3 +254,38 @@ scores <- collect(score)
 
     ## Warning: Missing values are always removed in SQL.
     ## Use `AVG(x, na.rm = TRUE)` to silence this warning
+
+``` r
+print(scores)
+```
+
+    ## # A tibble: 20 x 3
+    ##    description                                                 gain   pred
+    ##  * <chr>                                                      <dbl>  <dbl>
+    ##  1 Pinnacle Airlines Inc.                                     0.400  0.537
+    ##  2 Comair Inc.                                               -2.20   0.288
+    ##  3 Skywest Airlines Inc.                                     -1.20   0.121
+    ##  4 US Airways Inc. (Merged with America West 9/05. Reportin…  2.40   1.01 
+    ##  5 Expressjet Airlines Inc.                                  -0.300 -2.47 
+    ##  6 American Eagle Airlines Inc.                              -2.50  -2.48 
+    ##  7 Frontier Airlines Inc.                                    -0.300  1.27 
+    ##  8 United Air Lines Inc.                                      2.00   0.743
+    ##  9 Alaska Airlines Inc.                                       1.40   2.04 
+    ## 10 Aloha Airlines Inc.                                        5.50   3.17 
+    ## 11 Atlantic Southeast Airlines                                0.500  1.10 
+    ## 12 Mesa Airlines Inc.                                         0.200  2.44 
+    ## 13 American Airlines Inc.                                    -0.600 -0.567
+    ## 14 Continental Air Lines Inc.                                 2.30  -0.397
+    ## 15 Delta Air Lines Inc.                                      -1.40  -1.80 
+    ## 16 Northwest Airlines Inc.                                   -2.80  -1.30 
+    ## 17 Southwest Airlines Co.                                     4.10   4.24 
+    ## 18 JetBlue Airways                                           -0.900 -1.51 
+    ## 19 AirTran Airways Corporation                               -1.90  -0.988
+    ## 20 Hawaiian Airlines Inc.                                    -0.900  3.21
+
+What we have done here is computed the predicted scores entirely inside the database; the test data is never loaded into memory. A side-effect of this process is that we had to compute the scores manually with a `mutate()` verb. Some database software comes with basic statistical packages that allow for prediction without needing to specify the equation explicitly (c.f spark\_ml).
+
+Closing Notes
+-------------
+
+Here we have demonstrated a typical sampling method for dealing with Big Data problems, however we have not looked at cases where we want to fit a model to all of the data in the database. Base R cannot solve these types of problems and packages with distributed computation must instead be used (e.g. `sparklyr`). This may seem like a severe limitation of R, but one should not underestimate the efficacy of sampling in statistical analysis. Sampling may yield a model that is "good enough" for our project or serve as a useful starting point of a larger project. Before spending time devising distributed learning solutions to a problem, start with a model derived from a sub-sample of the total data.
